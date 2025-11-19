@@ -35,12 +35,15 @@ def page_forecast():
         date_val = st.date_input("预报日期")
         wind = st.text_input("风向风速（示例：东南风3级 或 09005KT）")
     with col2:
-        temp = st.number_input("气温（℃）", value=28.0, format="%.1f")
-        weather = st.text_input("天气现象（示例：RA、SHRA、TSRA 等）")
+        temp_range = st.text_input("气温范围（示例：25-28 或 25~30）")
+        weather = st.text_input("天气现象（例：RA、SHRA、TSRA 等）")
 
     if st.button("保存预报记录"):
-        insert_forecast(str(date_val), wind, temp, weather)
-        st.success("✅ 预报记录已保存")
+        if not temp_range.strip():
+            st.warning("请输入气温范围，例如 25-28")
+        else:
+            insert_forecast(str(date_val), wind, temp_range.strip(), weather)
+            st.success("✅ 预报已保存")
 
     st.markdown("---")
     st.subheader("历史预报查询")
@@ -56,14 +59,38 @@ def page_forecast():
         if not rows:
             st.info("此时间段无预报记录。")
         else:
-            df = pd.DataFrame(rows, columns=["日期", "风向风速", "气温(℃)", "天气现象"])
+            df = pd.DataFrame(rows, columns=["日期", "风向风速", "气温范围", "天气现象"])
             st.dataframe(df, use_container_width=True)
 
-            if len(df) > 1:
-                chart_df = df[["日期", "气温(℃)"]].copy()
+            # ------- 温度图形展示（取平均温度绘图） -------
+            try:
+                chart_df = df[["日期", "气温范围"]].copy()
                 chart_df["日期"] = pd.to_datetime(chart_df["日期"])
-                chart_df = chart_df.set_index("日期")
-                st.line_chart(chart_df, height=300)
+
+                # 将范围值「25-28」转为平均值 (26.5)
+                def avg_temp(x):
+                    parts = re.split(r"[-~]", x)
+                    if len(parts) == 2:
+                        try:
+                            lo = float(parts[0])
+                            hi = float(parts[1])
+                            return (lo + hi) / 2
+                        except:
+                            return None
+                    return None
+
+                import re
+                chart_df["avg_temp"] = chart_df["气温范围"].apply(avg_temp)
+                chart_df = chart_df.dropna(subset=["avg_temp"])
+
+                if len(chart_df) > 1:
+                    chart_df = chart_df.set_index("日期")
+                    st.line_chart(chart_df["avg_temp"], height=300)
+                    st.caption("（图中显示的是气温范围的平均值）")
+
+            except Exception as e:
+                st.warning(f"温度图表渲染失败：{e}")
+
 
 
 def page_metar():
