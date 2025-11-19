@@ -33,10 +33,10 @@ def page_forecast():
     col1, col2 = st.columns(2)
     with col1:
         date_val = st.date_input("预报日期")
-        wind = st.text_input("风向风速（示例：东南风3级 或 09005KT）")
+        wind = st.text_input("风向风速（示例：030/05）")
     with col2:
-        temp_range = st.text_input("气温范围（示例：25-28 或 25~30）")
-        weather = st.text_input("天气现象（例：RA、SHRA、TSRA 等）")
+        temp_range = st.text_input("气温范围（示例：25-28）")
+        weather = st.text_input("天气现象")
 
     if st.button("保存预报记录"):
         if not temp_range.strip():
