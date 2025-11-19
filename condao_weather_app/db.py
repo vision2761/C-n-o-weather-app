@@ -15,68 +15,22 @@ def get_conn():
         conn.close()
 
 
+# ------------------ 昆岛预报表（升级版：最低温/最高温） ------------------
+
 def init_db():
-    """初始化数据库和数据表"""
     with get_conn() as conn:
         c = conn.cursor()
 
-        # 昆岛天气预报表
+        # 新版预报表（拆分最低温 / 最高温）
         c.execute(
             """
             CREATE TABLE IF NOT EXISTS forecasts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT,            -- 预报日期 YYYY-MM-DD
-                wind TEXT,            -- 风向风速文字描述
-                temp REAL,            -- 气温(℃)
-                weather TEXT,         -- 天气现象
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-
-        # METAR/SPECI 报文解析结果表（升级版）
-        c.execute(
-            """
-            CREATE TABLE IF NOT EXISTS metars (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                obs_time TEXT,        -- 报文时间(例如 191200Z)
-                station TEXT,         -- 站号，如 VVCS / VVTS
-                raw TEXT,             -- 原始报文全文
-
-                wind_dir TEXT,        -- 风向（度数或 VRB，文本形式）
-                wind_speed REAL,      -- 风速(kt)
-                wind_gust REAL,       -- 阵风(kt)
-
-                visibility INTEGER,   -- 能见度(m)
-
-                temp REAL,            -- 温度(℃)
-                dewpoint REAL,        -- 露点(℃)
-
-                weather TEXT,         -- 中文天气描述（逗号拼接）
-                rain_flag INTEGER,    -- 是否降水(1是0否)
-                rain_level_cn TEXT,   -- 雨型：小雨/中雨/大雨/雷阵雨
-
-                cloud_1_amount TEXT,  -- 第一层云量 FEW/SCT/BKN/OVC
-                cloud_1_height_m REAL,-- 第一层云底高度(米)
-                cloud_2_amount TEXT,
-                cloud_2_height_m REAL,
-                cloud_3_amount TEXT,
-                cloud_3_height_m REAL,
-
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-
-        # 降水记录表（保留原设计）
-        c.execute(
-            """
-            CREATE TABLE IF NOT EXISTS rain_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                start_time TEXT,      -- 降水开始时间 YYYY-MM-DD HH:MM:SS
-                rain_level_cn TEXT,   -- 雨强(中文)：小雨/中雨/大雨/雷阵雨等
-                rain_code TEXT,       -- 报文中的降水代码：-RA / RA / +RA / TSRA 等
-                note TEXT,            -- 备注
+                date TEXT,           -- 预报日期
+                wind TEXT,           -- 风向风速
+                temp_min REAL,       -- 最低温
+                temp_max REAL,       -- 最高温
+                weather TEXT,        -- 天气现象
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -85,26 +39,28 @@ def init_db():
         conn.commit()
 
 
-# ------------ 昆岛预报相关 ------------
-
-def insert_forecast(date_str, wind, temp, weather):
+def insert_forecast(date_str, wind, temp_min, temp_max, weather):
+    """保存预报（最低温、最高温）"""
     with get_conn() as conn:
         c = conn.cursor()
         c.execute(
-            "INSERT INTO forecasts (date, wind, temp, weather) VALUES (?, ?, ?, ?)",
-            (date_str, wind, temp, weather),
+            """
+            INSERT INTO forecasts (date, wind, temp_min, temp_max, weather)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (date_str, wind, temp_min, temp_max, weather),
         )
         conn.commit()
 
 
 def get_forecasts(start_date=None, end_date=None):
-    """按日期范围查询预报，日期格式 YYYY-MM-DD"""
+    """按日期范围查询预报"""
     with get_conn() as conn:
         c = conn.cursor()
         if start_date and end_date:
             c.execute(
                 """
-                SELECT date, wind, temp, weather
+                SELECT date, wind, temp_min, temp_max, weather
                 FROM forecasts
                 WHERE date BETWEEN ? AND ?
                 ORDER BY date
@@ -114,12 +70,13 @@ def get_forecasts(start_date=None, end_date=None):
         else:
             c.execute(
                 """
-                SELECT date, wind, temp, weather
+                SELECT date, wind, temp_min, temp_max, weather
                 FROM forecasts
                 ORDER BY date DESC
                 LIMIT 50
                 """
             )
+
         return c.fetchall()
 
 
