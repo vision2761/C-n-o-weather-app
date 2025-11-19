@@ -1,9 +1,9 @@
-# app.py  ——  昆岛（Côn Đảo）气象记录与分析系统
-# 需要放在与 metar_parser.py、db.py 同一目录下
-# 运行方式：streamlit run app.py
+# app.py —— 昆岛（Côn Đảo）气象记录与分析系统
+# 适配：最低温 / 最高温，METAR 云量、雨型、阵风解析
 
 import streamlit as st
 import pandas as pd
+import re
 from datetime import datetime, time
 
 from db import (
@@ -23,27 +23,36 @@ init_db()
 
 st.set_page_config(page_title="昆岛机场气象记录系统", layout="wide")
 
-
-# ----------------- 页面函数 -----------------
-
+# -------------------------------------------------------------
+# 页面：昆岛天气预报
+# -------------------------------------------------------------
 def page_forecast():
     st.header("📋 昆岛天气预报录入与查询")
 
-    st.subheader("录入当天/指定日期的天气预报")
+    st.subheader("录入天气预报（支持最低温 / 最高温）")
+
     col1, col2 = st.columns(2)
     with col1:
         date_val = st.date_input("预报日期")
-        wind = st.text_input("风向风速（示例：030/05）")
+        wind = st.text_input("风向风速（示例：东南风3级 或 09005KT）")
     with col2:
-        temp_range = st.text_input("气温范围（示例：25-28）")
-        weather = st.text_input("天气现象")
+        temp_range = st.text_input("气温范围（格式示例：25-28 或 24~30）")
+        weather = st.text_input("天气现象（例：RA、SHRA、TSRA 等）")
 
     if st.button("保存预报记录"):
-        if not temp_range.strip():
-            st.warning("请输入气温范围，例如 25-28")
+        parts = re.split(r"[-~]", temp_range)
+
+        if len(parts) != 2:
+            st.warning("气温范围格式不正确，应为 25-28 或 24~30")
         else:
-            insert_forecast(str(date_val), wind, temp_range.strip(), weather)
-            st.success("✅ 预报已保存")
+            try:
+                tmin = float(parts[0])
+                tmax = float(parts[1])
+
+                insert_forecast(str(date_val), wind, tmin, tmax, weather)
+                st.success("✅ 天气预报已保存")
+            except:
+                st.error("气温必须为数字，例如 25-28")
 
     st.markdown("---")
     st.subheader("历史预报查询")
@@ -56,74 +65,66 @@ def page_forecast():
 
     if st.button("查询历史预报"):
         rows = get_forecasts(str(start), str(end))
+
         if not rows:
             st.info("此时间段无预报记录。")
         else:
-            df = pd.DataFrame(rows, columns=["日期", "风向风速", "气温范围", "天气现象"])
+            df = pd.DataFrame(
+                rows,
+                columns=["日期", "风向风速", "最低温(℃)", "最高温(℃)", "天气现象"],
+            )
             st.dataframe(df, use_container_width=True)
 
-            # ------- 温度图形展示（取平均温度绘图） -------
+            # 绘制平均气温折线图
             try:
-                chart_df = df[["日期", "气温范围"]].copy()
-                chart_df["日期"] = pd.to_datetime(chart_df["日期"])
+                df["日期"] = pd.to_datetime(df["日期"])
+                df["平均气温"] = (df["最低温(℃)"] + df["最高温(℃)"]) / 2
+                df_chart = df.set_index("日期")
 
-                # 将范围值「25-28」转为平均值 (26.5)
-                def avg_temp(x):
-                    parts = re.split(r"[-~]", x)
-                    if len(parts) == 2:
-                        try:
-                            lo = float(parts[0])
-                            hi = float(parts[1])
-                            return (lo + hi) / 2
-                        except:
-                            return None
-                    return None
-
-                import re
-                chart_df["avg_temp"] = chart_df["气温范围"].apply(avg_temp)
-                chart_df = chart_df.dropna(subset=["avg_temp"])
-
-                if len(chart_df) > 1:
-                    chart_df = chart_df.set_index("日期")
-                    st.line_chart(chart_df["avg_temp"], height=300)
+                if len(df_chart) > 1:
+                    st.line_chart(df_chart["平均气温"], height=300)
                     st.caption("（图中显示的是气温范围的平均值）")
 
             except Exception as e:
-                st.warning(f"温度图表渲染失败：{e}")
+                st.warning(f"图表渲染失败：{e}")
 
 
-
+# -------------------------------------------------------------
+# 页面：METAR 报文解析
+# -------------------------------------------------------------
 def page_metar():
     st.header("🛬 METAR/SPECI 报文解析")
 
-    st.subheader("输入 METAR 报文进行自动解析")
+    st.subheader("输入报文进行自动解析")
     raw = st.text_area(
-        "示例：VVCS 201200Z 27015G25KT 4000 SHRA SCT020 BKN030 28/24 Q1008",
+        "示例：VVCS 201200Z 27015G25KT 4000 +SHRA TS SCT018 BKN030 OVC100 27/24 Q1008",
         height=120,
     )
 
     if st.button("解析并保存"):
         if not raw.strip():
-            st.warning("请先输入报文。")
+            st.warning("请先输入报文")
         else:
             record = parse_metar(raw)
             insert_metar(record)
+
             st.success("✅ 报文已解析并保存")
-            st.write("解析结果：")
+            st.subheader("解析结果")
             st.json(record)
 
     st.markdown("---")
-    st.subheader("📑 最近 METAR 解析记录（含云底高度、雨型、阵风）")
+    st.subheader("📑 最近 METAR 解析记录")
 
     rows = get_recent_metars(limit=100)
+
     if not rows:
-        st.info("暂无数据")
+        st.info("暂无 METAR 数据")
         return
 
     df = pd.DataFrame(
         rows,
         columns=[
-            "观测时间",
+            "报文时间",
             "站号",
             "原始报文",
             "风向(°)",
@@ -150,10 +151,13 @@ def page_metar():
     st.caption(f"📌 最近记录中共有 **{rain_count} 条 METAR 含降水**。")
 
 
+# -------------------------------------------------------------
+# 页面：降水记录
+# -------------------------------------------------------------
 def page_rain():
     st.header("🌧 降水事件记录")
 
-    st.subheader("手动记录一次降水开始时间")
+    st.subheader("记录一次降水开始时间")
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -164,15 +168,16 @@ def page_rain():
         rain_level = st.selectbox("雨强（中文）", ["小雨", "中雨", "大雨", "雷阵雨"])
 
     rain_code = st.text_input("对应报文代码（如 -RA、RA、+RA、TSRA）")
-    note = st.text_input("备注（选填）")
+    note = st.text_input("备注（可选）")
 
     if st.button("保存降水记录"):
         start_dt = datetime.combine(d, t).strftime("%Y-%m-%d %H:%M:%S")
+
         insert_rain_event(start_dt, rain_level, rain_code, note)
         st.success("🌧 降水记录已保存")
 
     st.markdown("---")
-    st.subheader("历史降水事件查询")
+    st.subheader("历史降水查询")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -180,40 +185,45 @@ def page_rain():
     with c2:
         end = st.date_input("结束日期", key="rain_end")
 
-    if st.button("查询降水记录"):
+    if st.button("查询降水历史"):
         rows = get_rain_events(str(start), str(end))
+
         if not rows:
             st.info("此时间段无降水记录")
         else:
             df = pd.DataFrame(
                 rows,
-                columns=["开始时间", "雨强(中文)", "报文代码", "备注"],
+                columns=["开始时间", "雨强", "报文代码", "备注"],
             )
             st.dataframe(df, use_container_width=True)
 
-            # 统计每天次数
             stats = get_rain_stats_by_day(str(start), str(end))
             if stats:
                 s_df = pd.DataFrame(stats, columns=["日期", "次数"])
                 s_df["日期"] = pd.to_datetime(s_df["日期"])
                 s_df = s_df.set_index("日期")
+
                 st.bar_chart(s_df, y="次数", height=280)
                 st.caption(f"📌 共记录 {s_df['次数'].sum()} 次降水事件。")
 
 
+# -------------------------------------------------------------
+# 页面：历史分析
+# -------------------------------------------------------------
 def page_analysis():
-    st.header("📊 综合历史分析（降水统计）")
+    st.header("📊 降水统计分析")
 
     st.subheader("按日统计降水次数")
 
-    c1, c2 = st.columns(2)
-    with c1:
+    col1, col2 = st.columns(2)
+    with col1:
         start = st.date_input("统计开始日期", key="ana_start")
-    with c2:
+    with col2:
         end = st.date_input("统计结束日期", key="ana_end")
 
     if st.button("生成统计图"):
         stats = get_rain_stats_by_day(str(start), str(end))
+
         if not stats:
             st.info("此时间段无降水记录")
             return
@@ -228,8 +238,9 @@ def page_analysis():
         st.caption(f"📌 统计天数：{len(df)} 天，共降水 {df['次数'].sum()} 次。")
 
 
-# ----------------- 主页面显示 -----------------
-
+# -------------------------------------------------------------
+# 主菜单
+# -------------------------------------------------------------
 def main():
     st.title("✈ 昆岛机场（Côn Đảo）气象记录与分析系统")
 
